@@ -1,9 +1,33 @@
 import os
 import time
+import re
 
 import demo_util
 import streamlit as st
-from demo_util import DemoFileIOHelper, DemoTextProcessingHelper, DemoUIHelper
+from demo_util import DemoFileIOHelper, DemoTextProcessingHelper, DemoUIHelper, StreamlitCallbackHandler
+
+
+def sanitize_filename(filename):
+    """
+    Sanitize the filename to ensure it's valid across different operating systems.
+    """
+    # Replace spaces and underscores with hyphens
+    filename = re.sub(r'[\s_]+', '-', filename)
+
+    # Remove any character that isn't alphanumeric or hyphen
+    filename = re.sub(r'[^a-zA-Z0-9-]', '', filename)
+
+    # Remove leading and trailing hyphens
+    filename = filename.strip('-')
+
+    # Ensure the filename isn't empty after sanitization
+    if not filename:
+        filename = "unnamed-topic"
+
+    # Truncate to a reasonable length (e.g., 255 characters)
+    filename = filename[:255]
+
+    return filename
 
 
 def create_new_article_page():
@@ -12,8 +36,14 @@ def create_new_article_page():
     if "page3_write_article_state" not in st.session_state:
         st.session_state["page3_write_article_state"] = "not started"
 
-    if st.session_state["page3_write_article_state"] == "not started":
+    # Call set_storm_runner() early to display model and retriever options
+    runner = demo_util.set_storm_runner()
 
+    if runner is None:
+        st.error("Unable to initialize STORM runner. Please check your API keys and try again.")
+        return
+
+    if st.session_state["page3_write_article_state"] == "not started":
         _, search_form_column, _ = st.columns([2, 5, 2])
         with search_form_column:
             with st.form(key='search_form'):
@@ -31,8 +61,7 @@ def create_new_article_page():
                         pass_appropriateness_check = False
                         st.session_state["page3_warning_message"] = "topic could not be empty"
 
-                    st.session_state["page3_topic_name_cleaned"] = st.session_state["page3_topic"].replace(
-                        ' ', '_').replace('/', '_')
+                    st.session_state["page3_topic_name_cleaned"] = sanitize_filename(st.session_state["page3_topic"])
                     if not pass_appropriateness_check:
                         st.session_state["page3_write_article_state"] = "not started"
                         alert = st.warning(st.session_state["page3_warning_message"], icon="⚠️")
@@ -46,17 +75,15 @@ def create_new_article_page():
         if not os.path.exists(current_working_dir):
             os.makedirs(current_working_dir)
 
-        if "runner" not in st.session_state:
-            demo_util.set_storm_runner()
         st.session_state["page3_current_working_dir"] = current_working_dir
         st.session_state["page3_write_article_state"] = "pre_writing"
 
     if st.session_state["page3_write_article_state"] == "pre_writing":
         status = st.status("I am brain**STORM**ing now to research the topic. (This may take 2-3 minutes.)")
-        st_callback_handler = demo_util.StreamlitCallbackHandler(status)
+        st_callback_handler = StreamlitCallbackHandler(status)
         with status:
             # STORM main gen outline
-            st.session_state["runner"].run(
+            runner.run(
                 topic=st.session_state["page3_topic"],
                 do_research=True,
                 do_generate_outline=True,
@@ -75,15 +102,15 @@ def create_new_article_page():
         with st.status(
                 "Now I will connect the information I found for your reference. (This may take 4-5 minutes.)") as status:
             st.info('Now I will connect the information I found for your reference. (This may take 4-5 minutes.)')
-            st.session_state["runner"].run(topic=st.session_state["page3_topic"], do_research=False,
-                                           do_generate_outline=False,
-                                           do_generate_article=True, do_polish_article=True, remove_duplicate=False)
+            runner.run(topic=st.session_state["page3_topic"], do_research=False,
+                       do_generate_outline=False,
+                       do_generate_article=True, do_polish_article=True, remove_duplicate=False)
             # finish the session
-            st.session_state["runner"].post_run()
+            runner.post_run()
 
             # update status bar
             st.session_state["page3_write_article_state"] = "prepare_to_show_result"
-            status.update(label="information snythesis complete!", state="complete")
+            status.update(label="information synthesis complete!", state="complete")
 
     if st.session_state["page3_write_article_state"] == "prepare_to_show_result":
         _, show_result_col, _ = st.columns([4, 3, 4])
